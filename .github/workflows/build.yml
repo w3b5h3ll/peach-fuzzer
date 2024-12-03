@@ -1,0 +1,80 @@
+name: Build Workflow
+
+on:
+  push:
+    branches:
+      - master  # 或其他你希望触发 CI 的分支
+  pull_request:
+    branches:
+      - master  # 或其他你希望触发 CI 的分支
+
+jobs:
+  build:
+    runs-on: ubuntu-18.04  # 使用 Ubuntu 18.04
+
+    steps:
+      # Step 1: Checkout the repository
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      # Step 2: Set up environment
+      - name: Set up environment
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq gnupg2 gcc g++ g++-multilib python ruby curl nodejs node-typescript default-jdk doxygen libxml2-utils xsltproc wget
+
+      # Step 3: Install Mono
+      - name: Install Mono
+        run: |
+          sudo apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys 3FA7E0328081BFF6A14DA29AA6A19B38D3D831EF
+          sudo apt install -y apt-transport-https ca-certificates
+          echo "deb https://download.mono-project.com/repo/ubuntu stable-bionic main" | sudo tee /etc/apt/sources.list.d/mono-official-stable.list
+          sudo apt update -qq -y
+          sudo apt-get install -y mono-devel
+
+      # Step 4: Download Paket
+      - name: Download Paket
+        run: |
+          cd paket/.paket
+          rm -f paket.exe paket.targets paket.bootstrapper.exe
+          wget https://github.com/fsprojects/Paket/releases/download/6.2.1/paket.bootstrapper.exe
+          wget https://github.com/fsprojects/Paket/releases/download/6.2.1/paket.targets
+          wget https://github.com/fsprojects/Paket/releases/download/6.2.1/paket.exe
+          wget https://github.com/fsprojects/Paket/releases/download/6.2.1/Paket.Restore.targets
+          cd ../../
+
+      # Step 5: Install Intel Pin tool
+      - name: Install Intel Pin Tool
+        run: |
+          wget https://software.intel.com/sites/landingpage/pintool/downloads/pin-3.21-98484-ge7cd811fd-gcc-linux.tar.gz
+          mv pin-3.21-98484-ge7cd811fd-gcc-linux.tar.gz 3rdParty/pin/
+          cd 3rdParty/pin/ && tar -xf pin-3.21-98484-ge7cd811fd-gcc-linux.tar.gz && mv pin-3.21-98484-ge7cd811fd-gcc-linux pin-3.21-98484-gcc-linux
+          cd ../../
+
+      # Step 6: Modify config files
+      - name: Modify config files
+        run: |
+          sed -i s/pin-3.19-98425-gcc-linux/pin-3.21-98484-gcc-linux/g build/config/linux.py
+          sed -i '/^int main.*/itemplate<bool b>\nstruct StaticAssert {};\ntemplate <>\nstruct StaticAssert<true>\n{\n  static void myassert() {}\n};\n' core/BasicBlocks/bblocks.cpp
+          sed -i 's/STATIC_ASSERT(sizeof(size_t) == sizeof(ADDRINT))/StaticAssert<sizeof(size_t) == sizeof(ADDRINT)>::myassert()/g' core/BasicBlocks/bblocks.cpp
+          sed -i 's/var config = new LicenseConfig();/\/\/var config = new LicenseConfig();/g' pro/Core/Runtime/BaseProgram.cs
+
+      # Step 7: Build and install
+      - name: Build and Install
+        run: |
+          ./waf configure
+          ./waf build
+          sudo apt purge -y mono* libmono* doxygen
+          sudo rm /etc/apt/sources.list.d/mono-official-stable.list
+          sudo apt update -y
+          sudo apt install -y mono-complete mono-devel
+          ./waf install
+
+      # Step 8: Upload artifacts
+      - name: Upload output
+        uses: actions/upload-artifact@v3
+        with:
+          name: output
+          path: output/
+
